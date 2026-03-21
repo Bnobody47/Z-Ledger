@@ -46,3 +46,54 @@ CREATE TABLE IF NOT EXISTS outbox (
   attempts SMALLINT NOT NULL DEFAULT 0
 );
 
+CREATE INDEX IF NOT EXISTS idx_outbox_unpublished
+  ON outbox (created_at)
+  WHERE published_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS projection_application_summary (
+  application_id TEXT PRIMARY KEY,
+  state TEXT,
+  applicant_id TEXT,
+  requested_amount_usd DOUBLE PRECISION,
+  approved_amount_usd DOUBLE PRECISION,
+  risk_tier TEXT,
+  fraud_score DOUBLE PRECISION,
+  compliance_status TEXT,
+  decision TEXT,
+  agent_sessions_completed TEXT[] NOT NULL DEFAULT '{}',
+  last_event_type TEXT,
+  last_event_at TIMESTAMPTZ,
+  human_reviewer_id TEXT,
+  final_decision_at TIMESTAMPTZ
+);
+
+CREATE TABLE IF NOT EXISTS projection_agent_performance (
+  agent_id TEXT NOT NULL,
+  model_version TEXT NOT NULL,
+  analyses_completed BIGINT NOT NULL DEFAULT 0,
+  decisions_generated BIGINT NOT NULL DEFAULT 0,
+  avg_confidence_score DOUBLE PRECISION,
+  avg_duration_ms DOUBLE PRECISION,
+  approve_rate DOUBLE PRECISION NOT NULL DEFAULT 0,
+  decline_rate DOUBLE PRECISION NOT NULL DEFAULT 0,
+  refer_rate DOUBLE PRECISION NOT NULL DEFAULT 0,
+  human_override_rate DOUBLE PRECISION NOT NULL DEFAULT 0,
+  first_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (agent_id, model_version)
+);
+
+CREATE TABLE IF NOT EXISTS projection_compliance_audit (
+  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  application_id TEXT NOT NULL,
+  as_of TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  compliance_status TEXT NOT NULL DEFAULT 'UNKNOWN',
+  checks JSONB NOT NULL DEFAULT '[]'::jsonb,
+  regulation_versions JSONB NOT NULL DEFAULT '{}'::jsonb,
+  last_event_type TEXT,
+  last_event_at TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_projection_compliance_audit_lookup
+  ON projection_compliance_audit (application_id, as_of DESC);
+

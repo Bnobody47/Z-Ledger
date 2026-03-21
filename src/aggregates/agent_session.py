@@ -2,7 +2,7 @@
 AgentSessionAggregate: Gas Town context enforcement, model version tracking.
 Stream: agent-{agent_id}-{session_id}
 """
-from src.models.events import StoredEvent
+from src.models.events import DomainError, StoredEvent
 from src.event_store import EventStore
 
 
@@ -37,8 +37,10 @@ class AgentSessionAggregate:
 
     def assert_context_loaded(self) -> None:
         if not self.context_loaded:
-            raise ValueError("AgentSession must have AgentContextLoaded before decisions")
+            raise DomainError("AgentSession must have AgentContextLoaded before decisions")
 
     def assert_model_version_current(self, model_version: str) -> None:
         if self.model_version and self.model_version != model_version:
-            raise ValueError(f"Model version mismatch: expected {self.model_version}, got {model_version}")
+            raise DomainError(
+                f"Model version mismatch: expected {self.model_version}, got {model_version}"
+            )

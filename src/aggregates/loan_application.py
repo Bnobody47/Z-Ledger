@@ -50,3 +50,6 @@ class LoanApplicationAggregate:
     def _on_ApplicationApproved(self, event: StoredEvent) -> None:
         self.state = ApplicationState.FINAL_APPROVED
         self.approved_amount = event.payload.get("approved_amount_usd")
+
+    def _on_CreditAnalysisCompleted(self, event: StoredEvent) -> None:
+        self.state = ApplicationState.ANALYSIS_COMPLETE
