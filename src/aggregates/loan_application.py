@@ -3,7 +3,7 @@ LoanApplicationAggregate: state machine, event replay via load(), _apply handler
 Stream: loan-{application_id}
 """
 from enum import Enum
-from src.models.events import StoredEvent
+from src.models.events import DomainError, StoredEvent
 from src.event_store import EventStore
 
 
@@ -47,9 +47,42 @@ class LoanApplicationAggregate:
         self.applicant_id = event.payload.get("applicant_id")
         self.requested_amount = event.payload.get("requested_amount_usd")
 
+    def _on_CreditAnalysisRequested(self, event: StoredEvent) -> None:
+        self.state = ApplicationState.AWAITING_ANALYSIS
+
     def _on_ApplicationApproved(self, event: StoredEvent) -> None:
         self.state = ApplicationState.FINAL_APPROVED
         self.approved_amount = event.payload.get("approved_amount_usd")
 
     def _on_CreditAnalysisCompleted(self, event: StoredEvent) -> None:
         self.state = ApplicationState.ANALYSIS_COMPLETE
+
+    def _on_ComplianceCheckRequested(self, event: StoredEvent) -> None:
+        self.state = ApplicationState.COMPLIANCE_REVIEW
+
+    def _on_DecisionGenerated(self, event: StoredEvent) -> None:
+        recommendation = event.payload.get("recommendation")
+        if recommendation == "APPROVE":
+            self.state = ApplicationState.APPROVED_PENDING_HUMAN
+        elif recommendation == "DECLINE":
+            self.state = ApplicationState.DECLINED_PENDING_HUMAN
+        else:
+            self.state = ApplicationState.PENDING_DECISION
+
+    def _on_ApplicationDeclined(self, event: StoredEvent) -> None:
+        self.state = ApplicationState.FINAL_DECLINED
+
+    def assert_can_submit(self) -> None:
+        if self.version != 0:
+            raise DomainError("Application already submitted.")
+
+    def assert_awaiting_credit_analysis(self) -> None:
+        allowed = {ApplicationState.SUBMITTED, ApplicationState.AWAITING_ANALYSIS}
+        if self.state not in allowed:
+            raise DomainError(
+                f"Invalid transition: credit analysis cannot be recorded from state={self.state}"
+            )
+
+    def assert_not_terminal(self) -> None:
+        if self.state in {ApplicationState.FINAL_APPROVED, ApplicationState.FINAL_DECLINED}:
+            raise DomainError(f"Application is terminal ({self.state}); no further transitions allowed.")

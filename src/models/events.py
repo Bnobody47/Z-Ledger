@@ -140,6 +140,10 @@ class StreamMetadata(BaseModel):
 
 
 class OptimisticConcurrencyError(Exception):
+    stream_id: str
+    expected_version: int
+    actual_version: int
+
     def __init__(self, message: str, stream_id: str, expected_version: int, actual_version: int):
         super().__init__(message)
         self.stream_id = stream_id

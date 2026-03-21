@@ -23,9 +23,8 @@ async def handle_submit_application(cmd: dict, store: EventStore) -> None:
     """Submit a new loan application to loan-{application_id}."""
     application_id = cmd["application_id"]
     stream_id = f"loan-{application_id}"
-    current_version = await store.stream_version(stream_id)
-    if current_version > 0:
-        raise DomainError(f"Application {application_id} already exists")
+    app = await LoanApplicationAggregate.load(store, application_id)
+    app.assert_can_submit()
 
     event = ApplicationSubmitted(
         application_id=application_id,
@@ -35,13 +34,20 @@ async def handle_submit_application(cmd: dict, store: EventStore) -> None:
         submission_channel=cmd.get("submission_channel", "api"),
         submitted_at=cmd.get("submitted_at", datetime.now(timezone.utc)),
     )
-    await store.append(stream_id=stream_id, events=[event], expected_version=-1)
+    await store.append(
+        stream_id=stream_id,
+        events=[event],
+        expected_version=app.version - 1,
+        correlation_id=cmd.get("correlation_id"),
+        causation_id=cmd.get("causation_id"),
+    )
 
 
 async def handle_credit_analysis_completed(cmd: dict, store: EventStore) -> None:
     """Record CreditAnalysisCompleted. Requires active AgentSession with context loaded."""
     app = await LoanApplicationAggregate.load(store, cmd["application_id"])
     agent = await AgentSessionAggregate.load(store, cmd["agent_id"], cmd["session_id"])
+    app.assert_awaiting_credit_analysis()
     agent.assert_context_loaded()
     agent.assert_model_version_current(cmd["model_version"])
 
@@ -68,6 +74,7 @@ async def handle_credit_analysis_completed(cmd: dict, store: EventStore) -> None
 async def handle_fraud_screening_completed(cmd: dict, store: EventStore) -> None:
     """Record FraudScreeningCompleted."""
     app = await LoanApplicationAggregate.load(store, cmd["application_id"])
+    app.assert_not_terminal()
     event = FraudScreeningCompleted(
         application_id=cmd["application_id"],
         agent_id=cmd["agent_id"],
@@ -113,6 +120,7 @@ async def handle_compliance_check(cmd: dict, store: EventStore) -> None:
 async def handle_generate_decision(cmd: dict, store: EventStore) -> None:
     """Generate DecisionGenerated. All required analyses must be present."""
     app = await LoanApplicationAggregate.load(store, cmd["application_id"])
+    app.assert_not_terminal()
     recommendation = cmd["recommendation"]
     confidence_score = float(cmd["confidence_score"])
     if confidence_score < 0.6:
@@ -136,6 +144,7 @@ async def handle_generate_decision(cmd: dict, store: EventStore) -> None:
 async def handle_human_review_completed(cmd: dict, store: EventStore) -> None:
     """Record HumanReviewCompleted."""
     app = await LoanApplicationAggregate.load(store, cmd["application_id"])
+    app.assert_not_terminal()
     if cmd.get("override") and not cmd.get("override_reason"):
         raise DomainError("override_reason is required when override=True")
     event = HumanReviewCompleted(
