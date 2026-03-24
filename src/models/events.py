@@ -16,7 +16,7 @@ class BaseEvent(BaseModel):
     event_version: int = 1
 
     def payload(self) -> dict[str, Any]:
-        data = self.model_dump()
+        data = self.model_dump(mode="json")
         data.pop("event_type", None)
         data.pop("event_version", None)
         return data

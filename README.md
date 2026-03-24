@@ -30,19 +30,32 @@ Once code is implemented, this README will include:
 - How to run the daemon and MCP server
 - How to run the full test suite
 
+### Database setup (one-time)
+```powershell
+.\scripts\run_setup.ps1
+```
+You'll be prompted for the postgres superuser password. This creates user `bnobody`, password `beahhal`, and database `z_ledger`.
+
 ### Interim testing (now)
 1. Install dependencies:
    - `python -m pip install -e ".[dev]"`
 2. Set DB connection (PowerShell):
-   - `$env:DATABASE_URL="postgresql://postgres:postgres@localhost:5432/z_ledger"`
+   - `$env:DATABASE_URL="postgresql://bnobody:beahhal@localhost:5432/z_ledger"`
 3. Run interim test:
-   - `python -m pytest tests/test_concurrency.py -q`
+   - `python -m pytest tests/test_concurrency.py -v -s`
 4. Run all currently scaffolded tests:
    - `python -m pytest -q`
 
 Notes:
 - If `DATABASE_URL` is not set, DB integration tests are skipped by design.
 - `tests/test_concurrency.py` auto-applies `src/schema.sql` and truncates event tables before running.
+
+### LLM agents (credit analysis)
+From the Apex Ledger starter:
+1. Copy `.env.example` to `.env` and add your `ANTHROPIC_API_KEY`.
+2. Re-run setup to create `applicant_registry` schema: `psql -U postgres -f scripts/setup_all.sql`
+3. Seed registry (optional): `python scripts/seed_registry.py`
+4. Run credit analysis: `python scripts/run_pipeline.py --application app-1`
 
 ### Final submission testing checklist
 1. Start PostgreSQL and create DB:

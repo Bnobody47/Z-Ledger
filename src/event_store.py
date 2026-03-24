@@ -1,6 +1,7 @@
 """Async PostgreSQL event store with optimistic concurrency."""
 from __future__ import annotations
 
+import json
 from typing import Any, AsyncIterator
 
 import asyncpg
@@ -13,6 +14,16 @@ from src.models.events import (
 )
 from src.upcasting.registry import UpcasterRegistry
 from src.upcasting.upcasters import registry as default_upcaster_registry
+
+
+def _row_to_stored_event(row: asyncpg.Record) -> dict:
+    """Convert DB row to dict suitable for StoredEvent; parse JSONB if returned as str."""
+    d = dict(row)
+    if isinstance(d.get("payload"), str):
+        d["payload"] = json.loads(d["payload"])
+    if isinstance(d.get("metadata"), str):
+        d["metadata"] = json.loads(d["metadata"])
+    return d
 
 
 def _infer_aggregate_type(stream_id: str) -> str:
@@ -107,8 +118,8 @@ class EventStore:
                         new_version,
                         event.event_type,
                         event.event_version,
-                        event.payload(),
-                        metadata,
+                        json.dumps(event.payload()),
+                        json.dumps(metadata),
                     )
                     await conn.execute(
                         """
@@ -117,11 +128,13 @@ class EventStore:
                         """,
                         row["event_id"],
                         "internal:projection-daemon",
-                        {
-                            "stream_id": stream_id,
-                            "event_type": event.event_type,
-                            "stream_position": new_version,
-                        },
+                        json.dumps(
+                            {
+                                "stream_id": stream_id,
+                                "event_type": event.event_type,
+                                "stream_position": new_version,
+                            }
+                        ),
                     )
 
                 await conn.execute(
@@ -166,7 +179,7 @@ class EventStore:
                 )
         out: list[StoredEvent] = []
         for row in rows:
-            event = StoredEvent(**dict(row))
+            event = StoredEvent(**_row_to_stored_event(row))
             out.append(self._upcaster_registry.upcast(event))
         return out
 
@@ -210,7 +223,7 @@ class EventStore:
             if not rows:
                 break
             for row in rows:
-                event = StoredEvent(**dict(row))
+                event = StoredEvent(**_row_to_stored_event(row))
                 event = self._upcaster_registry.upcast(event)
                 position = event.global_position
                 yield event
@@ -223,6 +236,15 @@ class EventStore:
                 stream_id,
             )
         return 0 if row is None else int(row["current_version"])
+
+    async def stream_exists(self, stream_id: str) -> bool:
+        pool = await self._pool_or_raise()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT 1 FROM event_streams WHERE stream_id = $1",
+                stream_id,
+            )
+        return row is not None
 
     async def archive_stream(self, stream_id: str) -> None:
         pool = await self._pool_or_raise()

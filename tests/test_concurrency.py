@@ -93,3 +93,10 @@ async def test_double_decision_concurrency(store):
     stream_events = await store.load_stream(stream_id)
     assert len(stream_events) == 4
     assert stream_events[-1].stream_position == 4
+
+    # Explicit output for report evidence (run with pytest -s to show)
+    print("\n--- CONCURRENCY TEST EVIDENCE ---")
+    print(f"Assertion 1 - Total stream length: {len(stream_events)} (expected 4)")
+    print(f"Assertion 2 - Winning task stream_position: {stream_events[-1].stream_position} (expected 4)")
+    print(f"Assertion 3 - Losing task raised: {type(failures[0]).__name__}(stream_id={failures[0].stream_id!r}, expected_version={failures[0].expected_version}, actual_version={failures[0].actual_version})")
+    print("---------------------------------\n")
