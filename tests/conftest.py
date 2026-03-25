@@ -26,7 +26,20 @@ async def store(db_url: str) -> EventStore:
         pool = await event_store._pool_or_raise()
         async with pool.acquire() as conn:
             await conn.execute(schema_sql)
-            await conn.execute("TRUNCATE TABLE outbox, events, event_streams RESTART IDENTITY CASCADE")
+            # Reset both write-side and read-side state for deterministic tests.
+            await conn.execute(
+                """
+                TRUNCATE TABLE
+                    outbox,
+                    events,
+                    event_streams,
+                    projection_checkpoints,
+                    projection_application_summary,
+                    projection_agent_performance,
+                    projection_compliance_audit
+                RESTART IDENTITY CASCADE
+                """
+            )
         yield event_store
     finally:
         await event_store.close()

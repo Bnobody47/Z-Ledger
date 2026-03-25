@@ -5,6 +5,7 @@ configurable retry, get_lag() per projection.
 from __future__ import annotations
 
 import asyncio
+import json
 
 from src.event_store import EventStore
 
@@ -61,7 +62,15 @@ class ProjectionDaemon:
             for row in rows:
                 from src.models.events import StoredEvent
 
-                event = StoredEvent(**dict(row))
+                d = dict(row)
+                # asyncpg returns JSONB columns as strings unless type codecs are registered.
+                # Convert back to dicts so Pydantic can validate.
+                if isinstance(d.get("payload"), str):
+                    d["payload"] = json.loads(d["payload"])
+                if isinstance(d.get("metadata"), str):
+                    d["metadata"] = json.loads(d["metadata"])
+
+                event = StoredEvent(**d)
                 attempts = 0
                 while True:
                     try:

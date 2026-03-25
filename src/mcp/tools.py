@@ -26,18 +26,26 @@ def _structured_error(exc: Exception) -> dict:
         return {
             "error_type": "OptimisticConcurrencyError",
             "message": str(exc),
-            "stream_id": exc.stream_id,
-            "expected_version": exc.expected_version,
-            "actual_version": exc.actual_version,
+            "context": {
+                "stream_id": exc.stream_id,
+                "expected_version": exc.expected_version,
+                "actual_version": exc.actual_version,
+            },
             "suggested_action": "reload_stream_and_retry",
         }
     if isinstance(exc, DomainError):
         return {
             "error_type": "DomainError",
             "message": str(exc),
+            "context": {},
             "suggested_action": "fix_preconditions_and_retry",
         }
-    return {"error_type": type(exc).__name__, "message": str(exc)}
+    return {
+        "error_type": type(exc).__name__,
+        "message": str(exc),
+        "context": {},
+        "suggested_action": "review_input_and_retry",
+    }
 
 
 def register_tools(mcp, store) -> None:

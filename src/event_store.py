@@ -272,7 +272,24 @@ class EventStore:
     async def execute(self, query: str, *args: Any) -> str:
         pool = await self._pool_or_raise()
         async with pool.acquire() as conn:
-            return await conn.execute(query, *args)
+            coerced_args: list[Any] = []
+            for a in args:
+                # Some tests pass dicts directly into $1::jsonb; asyncpg expects JSON strings.
+                if isinstance(a, dict):
+                    coerced_args.append(json.dumps(a))
+                    continue
+                if isinstance(a, list):
+                    # Used by ComplianceAuditProjection for checks JSONB.
+                    # Coerce lists-of-objects to JSON strings; keep simple lists as-is.
+                    if not a:
+                        coerced_args.append("[]")
+                    elif isinstance(a[0], (dict, list)):
+                        coerced_args.append(json.dumps(a))
+                    else:
+                        coerced_args.append(a)
+                    continue
+                coerced_args.append(a)
+            return await conn.execute(query, *coerced_args)
 
     async def fetch(self, query: str, *args: Any) -> list[asyncpg.Record]:
         pool = await self._pool_or_raise()

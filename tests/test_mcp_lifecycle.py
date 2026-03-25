@@ -8,31 +8,38 @@ from __future__ import annotations
 
 import pytest
 
-from src.commands.handlers import (
-    handle_credit_analysis_completed,
-    handle_start_agent_session,
-    handle_submit_application,
-)
+from fastmcp import FastMCP
+
+from src.mcp.resources import register_resources
+from src.mcp.tools import register_tools
 from src.projections.application_summary import ApplicationSummaryProjection
 from src.projections.daemon import ProjectionDaemon
 
 
 @pytest.mark.asyncio
 async def test_mcp_full_lifecycle(store):
-    # Baseline lifecycle equivalent to MCP tool flow.
-    await handle_submit_application(
+    daemon = ProjectionDaemon(store, projections=[ApplicationSummaryProjection()])
+
+    # Build an MCP server wired to the same connected EventStore instance.
+    mcp = FastMCP(name="z-ledger-test")
+    register_tools(mcp, store)
+    register_resources(mcp, store, daemon)
+
+    # Drive the lifecycle using tool calls (rubric requirement).
+    await mcp.call_tool(
+        "submit_application",
         {
             "application_id": "mcp-1",
             "applicant_id": "app-1",
             "requested_amount_usd": 25000,
         },
-        store,
     )
-    await handle_start_agent_session(
+    await mcp.call_tool(
+        "start_agent_session",
         {"agent_id": "agent-1", "session_id": "s1", "model_version": "v1"},
-        store,
     )
-    await handle_credit_analysis_completed(
+    await mcp.call_tool(
+        "record_credit_analysis",
         {
             "application_id": "mcp-1",
             "agent_id": "agent-1",
@@ -42,9 +49,8 @@ async def test_mcp_full_lifecycle(store):
             "risk_tier": "LOW",
             "recommended_limit_usd": 18000,
         },
-        store,
     )
-    daemon = ProjectionDaemon(store, projections=[ApplicationSummaryProjection()])
+
     await daemon._process_batch()
     row = await store.fetchrow(
         "SELECT state, risk_tier FROM projection_application_summary WHERE application_id = $1",

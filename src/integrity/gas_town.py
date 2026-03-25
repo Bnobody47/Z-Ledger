@@ -45,7 +45,16 @@ async def reconstruct_agent_context(
         context_text = context_text[-token_budget:]
 
     session_health = "HEALTHY"
-    if "Partial" in last_event.event_type or "Pending" in last_event.event_type:
+    # Detect "agent got far but hasn't finished cleanly" from node-level progress.
+    # In our simplified test model, Pending work appears as an `AgentNodeExecuted`
+    # with a `node_name` that contains "Pending".
+    if last_event.event_type == "AgentNodeExecuted":
+        node_name = (last_event.payload or {}).get("node_name") if hasattr(last_event, "payload") else None
+        if isinstance(node_name, str) and "Pending" in node_name:
+            session_health = "NEEDS_RECONCILIATION"
+
+    # Also keep the earlier generic fallback for partial/pending event types.
+    if session_health == "HEALTHY" and ("Partial" in last_event.event_type or "Pending" in last_event.event_type):
         session_health = "NEEDS_RECONCILIATION"
 
     return {
