@@ -4,6 +4,8 @@ snapshot strategy, rebuild_from_scratch(). SLO: lag < 2s.
 """
 from __future__ import annotations
 
+import json
+
 from src.projections.daemon import Projection
 
 
@@ -14,15 +16,44 @@ class ComplianceAuditProjection(Projection):
         if not event.stream_id.startswith("compliance-"):
             return
         application_id = event.payload.get("application_id") or event.stream_id.replace("compliance-", "")
-        checks = []
-        status = "IN_PROGRESS"
+
+        # Build a single check entry for the incoming event.
+        new_check: dict | None = None
         if event.event_type == "ComplianceRulePassed":
-            checks = [{"rule_id": event.payload.get("rule_id"), "status": "PASSED"}]
+            new_check = {"rule_id": event.payload.get("rule_id"), "status": "PASSED"}
         elif event.event_type == "ComplianceRuleFailed":
-            checks = [{"rule_id": event.payload.get("rule_id"), "status": "FAILED"}]
-            status = "FAILED"
+            new_check = {"rule_id": event.payload.get("rule_id"), "status": "FAILED"}
         elif event.event_type == "ComplianceCheckRequested":
-            checks = [{"required": event.payload.get("checks_required", [])}]
+            new_check = {"required": event.payload.get("checks_required", [])}
+
+        if new_check is None:
+            return
+
+        # Accumulate checks so the compliance resource can display the full set
+        # of compliance outcomes across the application lifecycle.
+        prev = await store.fetchrow(
+            """
+            SELECT checks, compliance_status
+            FROM projection_compliance_audit
+            WHERE application_id = $1
+            ORDER BY as_of DESC
+            LIMIT 1
+            """,
+            application_id,
+        )
+
+        prev_checks: list[dict] = []
+        prev_status = "IN_PROGRESS"
+        if prev:
+            prev_status = prev["compliance_status"] or prev_status
+            prev_checks_val = prev["checks"]
+            if isinstance(prev_checks_val, str):
+                prev_checks = json.loads(prev_checks_val)
+            elif isinstance(prev_checks_val, list):
+                prev_checks = prev_checks_val
+
+        checks = prev_checks + [new_check]
+        status = "FAILED" if new_check.get("status") == "FAILED" else prev_status
         await store.execute(
             """
             INSERT INTO projection_compliance_audit (

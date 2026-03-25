@@ -123,8 +123,13 @@ async def handle_generate_decision(cmd: dict, store: EventStore) -> None:
     app.assert_not_terminal()
     recommendation = cmd["recommendation"]
     confidence_score = float(cmd["confidence_score"])
-    if confidence_score < 0.6:
-        recommendation = "REFER"
+    await app.assert_can_generate_decision(
+        store,
+        recommendation=recommendation,
+        confidence_score=confidence_score,
+        contributing_agent_sessions=cmd.get("contributing_agent_sessions", []),
+        model_versions=cmd.get("model_versions"),
+    )
     event = DecisionGenerated(
         application_id=cmd["application_id"],
         orchestrator_agent_id=cmd["orchestrator_agent_id"],
@@ -147,6 +152,11 @@ async def handle_human_review_completed(cmd: dict, store: EventStore) -> None:
     app.assert_not_terminal()
     if cmd.get("override") and not cmd.get("override_reason"):
         raise DomainError("override_reason is required when override=True")
+    await app.assert_can_human_review(
+        store,
+        final_decision=cmd["final_decision"],
+        override=bool(cmd.get("override", False)),
+    )
     event = HumanReviewCompleted(
         application_id=cmd["application_id"],
         reviewer_id=cmd["reviewer_id"],

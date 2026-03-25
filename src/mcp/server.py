@@ -28,7 +28,7 @@ def build_server() -> tuple[FastMCP, ProjectionDaemon]:
     ]
     daemon = ProjectionDaemon(store, projections=projections)
     mcp = FastMCP(name="z-ledger")
-    register_tools(mcp, store)
+    register_tools(mcp, store, daemon)
     register_resources(mcp, store, daemon)
     return mcp, daemon
 

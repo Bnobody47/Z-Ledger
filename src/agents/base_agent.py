@@ -7,6 +7,8 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import os
+import urllib.request
 import time
 from abc import ABC, abstractmethod
 from datetime import datetime
@@ -81,6 +83,44 @@ class BaseApexAgent(ABC):
     async def _call_llm(
         self, system: str, user: str, max_tokens: int = 1024
     ) -> tuple[str, int, int, float]:
+        openrouter_key = os.environ.get("OPENROUTER_API_KEY")
+        if openrouter_key:
+            base_url = os.environ.get(
+                "OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1/chat/completions"
+            )
+            payload = {
+                "model": self.model,
+                "max_tokens": max_tokens,
+                "messages": [
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ],
+            }
+
+            def _do_request():
+                req = urllib.request.Request(
+                    base_url,
+                    data=json.dumps(payload).encode("utf-8"),
+                    headers={
+                        "Authorization": f"Bearer {openrouter_key}",
+                        "Content-Type": "application/json",
+                    },
+                    method="POST",
+                )
+                with urllib.request.urlopen(req, timeout=60) as resp:
+                    body = resp.read()
+                return json.loads(body.decode("utf-8"))
+
+            data = await asyncio.to_thread(_do_request)
+            text = data["choices"][0]["message"]["content"]
+            usage = data.get("usage") or {}
+            i = int(usage.get("prompt_tokens") or 0)
+            o = int(usage.get("completion_tokens") or 0)
+            # Cost model here is best-effort; OpenRouter pricing varies by provider.
+            cost = round(i / 1e6 * 3.0 + o / 1e6 * 15.0, 6)
+            return text, i, o, cost
+
+        # Fallback: Anthropic (keeps existing behavior).
         resp = await self.client.messages.create(
             model=self.model,
             max_tokens=max_tokens,

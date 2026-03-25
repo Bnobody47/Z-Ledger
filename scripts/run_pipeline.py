@@ -30,12 +30,16 @@ async def main():
         print("Error: DATABASE_URL not set. Set it or use --db-url")
         sys.exit(1)
 
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if not api_key or api_key == "sk-ant-YOUR_KEY_HERE":
-        print("Error: ANTHROPIC_API_KEY not set in .env")
+    openrouter_key = os.environ.get("OPENROUTER_API_KEY")
+    anthropic_key = os.environ.get("ANTHROPIC_API_KEY")
+    if not openrouter_key and (not anthropic_key or anthropic_key == "sk-ant-YOUR_KEY_HERE"):
+        print("Error: set either OPENROUTER_API_KEY or ANTHROPIC_API_KEY in .env")
         sys.exit(1)
 
-    from anthropic import AsyncAnthropic
+    client = None
+    if anthropic_key and not openrouter_key:
+        from anthropic import AsyncAnthropic
+        client = AsyncAnthropic()
     from src.event_store import EventStore
     from src.registry.client import ApplicantRegistryClient
     from src.agents.credit_analysis_agent import CreditAnalysisAgent
@@ -45,8 +49,6 @@ async def main():
 
     pool = await store._pool_or_raise()
     registry = ApplicantRegistryClient(pool)
-    client = AsyncAnthropic()
-
     agent = CreditAnalysisAgent(
         agent_id="credit-agent-1",
         agent_type="credit_analysis",

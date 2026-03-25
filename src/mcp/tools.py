@@ -48,10 +48,12 @@ def _structured_error(exc: Exception) -> dict:
     }
 
 
-def register_tools(mcp, store) -> None:
+def register_tools(mcp, store, daemon=None) -> None:
     @mcp.tool(
         description=(
             "Submit a new application. Preconditions: application_id must be unique. "
+            "Implementation rebuilds the LoanApplicationAggregate by replaying the "
+            "loan-{application_id} event stream to enforce write-side state rules."
             "Returns stream_id and initial_version."
         )
     )
@@ -68,6 +70,10 @@ def register_tools(mcp, store) -> None:
                 },
                 store,
             )
+            # Keep projections in sync after each write so LLM consumers can
+            # immediately query resources without managing the daemon.
+            if daemon is not None:
+                await daemon._process_batch()
             return {"stream_id": f"loan-{application_id}", "initial_version": 1}
         except Exception as exc:  # pragma: no cover
             return _structured_error(exc)
@@ -91,6 +97,8 @@ def register_tools(mcp, store) -> None:
                 },
                 store,
             )
+            if daemon is not None:
+                await daemon._process_batch()
             return {"session_id": session_id, "context_position": 1}
         except Exception as exc:  # pragma: no cover
             return _structured_error(exc)
@@ -98,7 +106,9 @@ def register_tools(mcp, store) -> None:
     @mcp.tool(
         description=(
             "Record credit analysis. Preconditions: active session via start_agent_session. "
-            "Optimistic concurrency enforced on loan stream."
+            "Optimistic concurrency enforced on loan stream. "
+            "Implementation rebuilds both LoanApplicationAggregate and AgentSessionAggregate "
+            "by replaying their event streams to validate context + model version."
         )
     )
     async def record_credit_analysis(
@@ -125,11 +135,19 @@ def register_tools(mcp, store) -> None:
                 },
                 store,
             )
+            if daemon is not None:
+                await daemon._process_batch()
             return {"event_type": "CreditAnalysisCompleted"}
         except Exception as exc:  # pragma: no cover
             return _structured_error(exc)
 
-    @mcp.tool(description="Record fraud screening.")
+    @mcp.tool(
+        description=(
+            "Record fraud screening. Preconditions: application must not be terminal. "
+            "Implementation rebuilds LoanApplicationAggregate by replaying the "
+            "loan-{application_id} event stream before appending."
+        )
+    )
     async def record_fraud_screening(
         application_id: str, agent_id: str, fraud_score: float, anomaly_flags: list[str] | None = None
     ):
@@ -144,17 +162,26 @@ def register_tools(mcp, store) -> None:
                 },
                 store,
             )
+            if daemon is not None:
+                await daemon._process_batch()
             return {"event_type": "FraudScreeningCompleted"}
         except Exception as exc:  # pragma: no cover
             return _structured_error(exc)
 
-    @mcp.tool(description="Record compliance check.")
+    @mcp.tool(
+        description=(
+            "Record compliance check. Preconditions: compliance-{application_id} stream write is allowed. "
+            "Implementation uses stream version from event_streams to enforce optimistic concurrency."
+        )
+    )
     async def record_compliance_check(application_id: str, rule_id: str, passed: bool):
         try:
             await handle_compliance_check(
                 {"application_id": application_id, "rule_id": rule_id, "passed": passed},
                 store,
             )
+            if daemon is not None:
+                await daemon._process_batch()
             return {"check_id": rule_id, "compliance_status": "PASSED" if passed else "FAILED"}
         except Exception as exc:  # pragma: no cover
             return _structured_error(exc)
@@ -173,11 +200,19 @@ def register_tools(mcp, store) -> None:
                 },
                 store,
             )
+            if daemon is not None:
+                await daemon._process_batch()
             return {"decision_id": application_id, "recommendation": recommendation}
         except Exception as exc:  # pragma: no cover
             return _structured_error(exc)
 
-    @mcp.tool(description="Record human review decision.")
+    @mcp.tool(
+        description=(
+            "Record human review decision. Preconditions: application must not be terminal and must be in a pending state. "
+            "Implementation rebuilds LoanApplicationAggregate by replaying the loan-{application_id} stream "
+            "to enforce state-machine and compliance dependency rules."
+        )
+    )
     async def record_human_review(
         application_id: str, reviewer_id: str, final_decision: str, override: bool = False
     ):
@@ -191,13 +226,23 @@ def register_tools(mcp, store) -> None:
                 },
                 store,
             )
+            if daemon is not None:
+                await daemon._process_batch()
             return {"final_decision": final_decision, "application_state": "REVIEWED"}
         except Exception as exc:  # pragma: no cover
             return _structured_error(exc)
 
-    @mcp.tool(description="Run audit chain integrity check for an entity.")
+    @mcp.tool(
+        description=(
+            "Run audit chain integrity check for an entity. Preconditions: entity has a primary stream and audit stream. "
+            "Implementation loads events from the relevant streams (replay via load_stream) and verifies the SHA-256 hash chain."
+        )
+    )
     async def run_integrity_check(entity_type: str, entity_id: str):
         try:
-            return await run_integrity_check_impl(store, entity_type, entity_id)
+            result = await run_integrity_check_impl(store, entity_type, entity_id)
+            if daemon is not None:
+                await daemon._process_batch()
+            return result
         except Exception as exc:  # pragma: no cover
             return _structured_error(exc)
