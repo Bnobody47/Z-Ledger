@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import datetime, timezone
 
 from src.event_store import EventStore
 
@@ -71,6 +72,7 @@ class ProjectionDaemon:
                     d["metadata"] = json.loads(d["metadata"])
 
                 event = StoredEvent(**d)
+                last_processed_recorded_at = event.recorded_at
                 attempts = 0
                 while True:
                     try:
@@ -105,7 +107,18 @@ class ProjectionDaemon:
                             break
 
             latest = await self._store.fetchrow("SELECT COALESCE(MAX(global_position), 0) AS max_pos FROM events")
-            self._lags[projection_name] = float(int(latest["max_pos"]) - last_position)
+            # Lag metric: processing delay in milliseconds between "now" and the
+            # recorded_at of the last processed event (0 when caught up).
+            if last_position >= int(latest["max_pos"]):
+                if "last_processed_recorded_at" in locals() and last_processed_recorded_at:
+                    self._lags[projection_name] = float(
+                        (datetime.now(timezone.utc) - last_processed_recorded_at).total_seconds() * 1000
+                    )
+                else:
+                    self._lags[projection_name] = 0.0
+            else:
+                # Not caught up: approximate lag as number of events remaining.
+                self._lags[projection_name] = float(int(latest["max_pos"]) - last_position)
 
     def get_lag(self, projection_name: str) -> float:
         """Lag in milliseconds."""

@@ -94,4 +94,20 @@ class ComplianceAuditProjection(Projection):
         return dict(row) if row else None
 
     async def rebuild_from_scratch(self, store) -> None:
-        await store.execute("TRUNCATE TABLE projection_compliance_audit")
+        # Non-blocking rebuild strategy:
+        # - Build an empty shadow table
+        # - Atomically swap it in (short lock window)
+        # This avoids long-lived locks during heavy rebuild logic.
+        await store.execute("DROP TABLE IF EXISTS projection_compliance_audit_shadow")
+        await store.execute(
+            "CREATE TABLE projection_compliance_audit_shadow (LIKE projection_compliance_audit INCLUDING ALL)"
+        )
+        await store.execute(
+            """
+            BEGIN;
+            ALTER TABLE projection_compliance_audit RENAME TO projection_compliance_audit_old;
+            ALTER TABLE projection_compliance_audit_shadow RENAME TO projection_compliance_audit;
+            DROP TABLE projection_compliance_audit_old;
+            COMMIT;
+            """
+        )

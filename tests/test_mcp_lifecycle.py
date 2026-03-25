@@ -77,6 +77,6 @@ async def test_mcp_full_lifecycle(store):
 
     compliance = json.loads(compliance_res.contents[0].content)
     assert "checks" in compliance
-    rule_ids = {c.get("rule_id") for c in compliance["checks"] if isinstance(c, dict)}
-    assert "REG-001" in rule_ids
-    assert "REG-002" in rule_ids
+    by_rule = {c.get("rule_id"): c.get("status") for c in compliance["checks"] if isinstance(c, dict) and c.get("rule_id")}
+    assert by_rule.get("REG-001") == "PASSED"
+    assert by_rule.get("REG-002") == "PASSED"
